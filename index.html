@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>Опора — восстановление копии</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        padding: max(18px, env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));
+        background: radial-gradient(500px 300px at 20% -10%, rgba(70,144,255,.22), transparent 60%), #05070a;
+        color: #fff;
+        font: 15px/1.45 -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -.02em; }
+      p { margin: 0 0 12px; color: #8b93a1; font-size: 13.5px; }
+      .card {
+        border: 1px solid rgba(255,255,255,.1);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255,255,255,.04);
+        margin-bottom: 14px;
+      }
+      .row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 14px; }
+      .row b { font-variant-numeric: tabular-nums; }
+      .ok { color: #46d6a0; }
+      .bad { color: #ff7a85; }
+      textarea {
+        width: 100%;
+        height: 150px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,.14);
+        background: #05070a;
+        color: #d9e7ff;
+        font: 11px/1.35 ui-monospace, Menlo, monospace;
+        padding: 8px;
+        resize: none;
+      }
+      button {
+        width: 100%;
+        padding: 14px;
+        border: 0;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #5c9eff, #3480f7);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        margin-top: 10px;
+      }
+      button:active { transform: scale(.985); }
+      .ghost { background: rgba(255,255,255,.08); color: #dbe2ec; }
+      .note { font-size: 12px; color: #78818f; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Восстановление копии</h1>
+    <p>Эта страница живёт по адресу, где раньше открывалось мини-приложение, поэтому видит его данные.</p>
+
+    <div class="card" id="summary"></div>
+
+    <div class="card">
+      <p style="margin-bottom:6px">Копия (нажмите «Скопировать»):</p>
+      <textarea id="dump" readonly></textarea>
+      <button id="copy">Скопировать копию</button>
+      <button id="download" class="ghost">Скачать файлом</button>
+      <p class="note">Дальше: откройте мини-приложение «Опора» → Настройки → «Вставить копию» → вставьте текст → «Восстановить».</p>
+    </div>
+
+    <script>
+      const STATE_KEY = 'latte.finance.state.v1';
+      const BACKUP_KEY = 'latte.finance.backup.v1';
+
+      const readJSON = (key) => {
+        try {
+          const raw = localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const main = readJSON(STATE_KEY);
+      const backup = readJSON(BACKUP_KEY);
+      const best = (() => {
+        const candidates = [main, backup].filter(Boolean);
+        if (!candidates.length) return null;
+        const score = (s) => (Array.isArray(s.transactions) ? s.transactions.length : 0);
+        return candidates.sort((a, b) => score(b) - score(a))[0];
+      })();
+
+      const summary = document.getElementById('summary');
+      const dump = document.getElementById('dump');
+
+      if (!best) {
+        summary.innerHTML =
+          '<div class="row"><span>Данные не найдены</span><b class="bad">пусто</b></div>' +
+          '<p class="note">По этому адресу в хранилище ничего нет. Значит данные вводились по другому адресу.</p>';
+      } else {
+        const tx = best.transactions.length;
+        const accounts = best.accounts.length;
+        const envelopes = (best.envelopes || []).length;
+        summary.innerHTML =
+          `<div class="row"><span>Операций</span><b class="${tx ? 'ok' : 'bad'}">${tx}</b></div>` +
+          `<div class="row"><span>Счетов</span><b>${accounts}</b></div>` +
+          `<div class="row"><span>Конвертов</span><b>${envelopes}</b></div>` +
+          `<div class="row"><span>Валюта</span><b>${(best.settings && best.settings.currency) || '—'}</b></div>` +
+          `<div class="row"><span>Последняя операция</span><b>${best.transactions.map((t) => t.date).sort().pop() || '—'}</b></div>` +
+          (backup && main && backup !== main ? '<p class="note">Взята более полная из двух копий (основная и резервная).</p>' : '');
+        dump.value = JSON.stringify({ app: 'latte', version: best.version || 2, exportedAt: new Date().toISOString(), state: best });
+      }
+
+      const copy = async () => {
+        const text = dump.value;
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          dump.focus();
+          dump.select();
+          document.execCommand('copy');
+        }
+        const btn = document.getElementById('copy');
+        btn.textContent = 'Скопировано ✓';
+        setTimeout(() => (btn.textContent = 'Скопировать копию'), 2000);
+      };
+
+      document.getElementById('copy').addEventListener('click', copy);
+
+      document.getElementById('download').addEventListener('click', () => {
+        if (!dump.value) return;
+        const blob = new Blob([dump.value], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'latte-opora-backup.json';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      });
+
+      try {
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg) {
+          tg.ready();
+          tg.expand();
+          if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+          if (tg.setHeaderColor) tg.setHeaderColor('#05070a');
+          if (tg.setBackgroundColor) tg.setBackgroundColor('#05070a');
+        }
+      } catch {}
+    </script>
+  </body>
+</html>
